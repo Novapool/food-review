@@ -119,7 +119,7 @@ class LocationService:
             logger.error(f"Error geocoding address: {e}")
             return None
     
-    async def reverse_geocode(self, lat: float, lng: float) -> Optional[Dict[str, str]]:
+    async def reverse_geocode(self, lat: float, lng: float) -> Optional[Dict[str, Optional[str]]]:
         """
         Convert coordinates to human-readable address
         """
@@ -142,9 +142,20 @@ class LocationService:
                     return None
                 
                 result = data["results"][0]
+                
+                # Extract city from address components
+                components = result.get("address_components", [])
+                city = None
+                for component in components:
+                    types = component.get("types", [])
+                    if "locality" in types:
+                        city = component.get("long_name")
+                        break
+                
                 return {
                     "formatted_address": result.get("formatted_address", ""),
-                    "place_id": result.get("place_id", "")
+                    "place_id": result.get("place_id", ""),
+                    "city": city  # Add city to the returned dict
                 }
                 
         except Exception as e:
@@ -170,10 +181,15 @@ class LocationService:
             # Optionally enhance with reverse geocoding
             address_info = await self.reverse_geocode(lat, lng)
             
+            # Extract city from address_info if available
+            city = None
+            if address_info:
+                city = address_info.get("city")  # Now this is properly typed
+            
             return LocationData(
                 latitude=lat,
                 longitude=lng,
-                city=address_info.get("city") if address_info else None,
+                city=city,
                 source="user_provided"
             )
         
@@ -219,7 +235,7 @@ class LocationService:
         return R * c
 
 # Example usage functions
-async def get_location_auto(request_ip: str = None) -> Optional[LocationData]:
+async def get_location_auto(request_ip: Optional[str] = None) -> Optional[LocationData]:
     """
     Simple function to automatically get user location
     """

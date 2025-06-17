@@ -13,7 +13,7 @@ import asyncio
 from datetime import datetime
 import logging
 
-# Import our new services
+# Import our services
 from location_service import LocationService, LocationData
 from ai_analysis_service import AIAnalysisService, RestaurantAnalysis, analyze_single_restaurant, analyze_restaurant_area
 
@@ -23,13 +23,14 @@ logger = logging.getLogger(__name__)
 
 app = FastAPI(
     title="Restaurant Finder API",
-    description="Find restaurants within a specified radius using Google Places API",
-    version="1.0.0"
+    description="Find restaurants within a specified radius using Google Places API with AI analysis",
+    version="2.0.0"
 )
 
 # Environment variables
 GOOGLE_PLACES_API_KEY = os.getenv("GOOGLE_PLACES_API_KEY")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+
 if not GOOGLE_PLACES_API_KEY:
     logger.error("GOOGLE_PLACES_API_KEY environment variable not set")
 
@@ -129,7 +130,11 @@ async def get_place_details(place_id: str, include_reviews: bool = True) -> Dict
     url = f"{GOOGLE_PLACES_BASE_URL}/details/json"
     
     # Base fields
-    fields = ["name", "formatted_address", "formatted_phone_number", "website", "opening_hours", "photos", "rating", "user_ratings_total"]
+    fields = [
+        "name", "formatted_address", "formatted_phone_number", "website", 
+        "opening_hours", "photos", "rating", "user_ratings_total", "geometry",
+        "price_level", "types"
+    ]
     
     # Add reviews if requested
     if include_reviews:
@@ -143,15 +148,18 @@ async def get_place_details(place_id: str, include_reviews: bool = True) -> Dict
     
     async with httpx.AsyncClient() as client:
         try:
-            response = await client.get(url, params=params)
+            response = await client.get(url, params=params, timeout=30)
             response.raise_for_status()
             data = response.json()
             
             if data.get("status") == "OK":
                 return data.get("result", {})
             else:
-                logger.warning(f"Place details API error: {data.get('status')}")
+                logger.warning(f"Place details API error: {data.get('status')} - {data.get('error_message', '')}")
                 return {}
+        except httpx.TimeoutException:
+            logger.error(f"Timeout fetching place details for {place_id}")
+            return {}
         except Exception as e:
             logger.error(f"Error fetching place details: {e}")
             return {}
@@ -163,7 +171,13 @@ async def root():
     return {
         "status": "healthy",
         "message": "Restaurant Finder API is running",
-        "version": "1.0.0"
+        "version": "2.0.0",
+        "features": [
+            "automatic location detection",
+            "AI restaurant analysis", 
+            "area dining scene analysis",
+            "multi-source reviews"
+        ]
     }
 
 @app.get("/restaurants/auto", response_model=RestaurantSearchResponse)
@@ -172,8 +186,7 @@ async def find_restaurants_auto_location(
     address: Optional[str] = Query(None, description="Address to search from (alternative to auto-detection)"),
     radius: float = Query(10, description="Search radius in miles", ge=0.1, le=MAX_RADIUS_MILES),
     min_rating: float = Query(0, description="Minimum rating filter", ge=0, le=5),
-    max_results: int = Query(60, description="Maximum number of results", ge=1, le=60),
-    include_ai_analysis: bool = Query(True, description="Include AI analysis of the area")
+    max_results: int = Query(60, description="Maximum number of results", ge=1, le=60)
 ):
     """
     Find restaurants with automatic location detection
@@ -182,13 +195,14 @@ async def find_restaurants_auto_location(
     - **radius**: Search radius in miles (max 10)
     - **min_rating**: Filter restaurants with rating >= this value
     - **max_results**: Maximum number of restaurants to return
-    - **include_ai_analysis**: Whether to include AI analysis of restaurants
     """
     
     # Get client IP for location detection
-    client_ip = request.client.host if request.client else None
-    if client_ip == "127.0.0.1":
-        client_ip = None  # Let the service detect public IP
+    client_ip = None
+    if request.client and hasattr(request.client, 'host'):
+        client_ip = request.client.host
+        if client_ip == "127.0.0.1" or client_ip == "::1":
+            client_ip = None  # Let the service detect public IP
     
     # Get user location
     location = await location_service.get_user_location(
@@ -249,14 +263,15 @@ async def find_restaurants(
     async with httpx.AsyncClient() as client:
         try:
             # Make initial request
-            response = await client.get(url, params=params)
+            response = await client.get(url, params=params, timeout=30)
             response.raise_for_status()
             data = response.json()
             
             if data.get("status") != "OK":
+                error_msg = data.get("error_message", data.get("status", "Unknown error"))
                 raise HTTPException(
                     status_code=400, 
-                    detail=f"Google Places API error: {data.get('status', 'Unknown error')}"
+                    detail=f"Google Places API error: {error_msg}"
                 )
             
             # Process first page of results
@@ -265,13 +280,17 @@ async def find_restaurants(
                     break
                     
                 # Apply rating filter
-                if place.get("rating", 0) >= min_rating:
+                place_rating = place.get("rating", 0)
+                if place_rating >= min_rating:
                     restaurant = format_restaurant_data(place, lat, lng)
                     restaurants.append(restaurant)
             
             # Get additional pages if needed and available
             next_page_token = data.get("next_page_token")
-            while next_page_token and len(restaurants) < max_results:
+            pages_fetched = 1
+            max_pages = 3  # Limit to prevent excessive API calls
+            
+            while next_page_token and len(restaurants) < max_results and pages_fetched < max_pages:
                 # Wait for next page token to become valid (required by Google)
                 await asyncio.sleep(2)
                 
@@ -280,23 +299,34 @@ async def find_restaurants(
                     "key": GOOGLE_PLACES_API_KEY
                 }
                 
-                response = await client.get(url, params=next_params)
-                response.raise_for_status()
-                data = response.json()
-                
-                if data.get("status") != "OK":
-                    break
-                
-                for place in data.get("results", []):
-                    if len(restaurants) >= max_results:
+                try:
+                    response = await client.get(url, params=next_params, timeout=30)
+                    response.raise_for_status()
+                    data = response.json()
+                    
+                    if data.get("status") != "OK":
+                        logger.warning(f"Next page error: {data.get('status')}")
                         break
                     
-                    if place.get("rating", 0) >= min_rating:
-                        restaurant = format_restaurant_data(place, lat, lng)
-                        restaurants.append(restaurant)
-                
-                next_page_token = data.get("next_page_token")
+                    for place in data.get("results", []):
+                        if len(restaurants) >= max_results:
+                            break
+                        
+                        place_rating = place.get("rating", 0)
+                        if place_rating >= min_rating:
+                            restaurant = format_restaurant_data(place, lat, lng)
+                            restaurants.append(restaurant)
+                    
+                    next_page_token = data.get("next_page_token")
+                    pages_fetched += 1
+                    
+                except Exception as e:
+                    logger.warning(f"Error fetching additional page: {e}")
+                    break
             
+        except httpx.TimeoutException:
+            logger.error("Timeout while fetching restaurants")
+            raise HTTPException(status_code=500, detail="Request timeout while fetching restaurant data")
         except httpx.HTTPError as e:
             logger.error(f"HTTP error occurred: {e}")
             raise HTTPException(status_code=500, detail="Failed to fetch restaurant data")
@@ -318,7 +348,7 @@ async def find_restaurants(
     return response
 
 @app.get("/restaurant/{place_id}", response_model=Dict[str, Any])
-async def get_restaurant_details(
+async def get_restaurant_details_endpoint(
     place_id: str,
     include_reviews: bool = Query(True, description="Include Google reviews in response")
 ):
@@ -396,9 +426,11 @@ async def detect_user_location(
     """
     
     # Get client IP
-    client_ip = request.client.host if request.client else None
-    if client_ip == "127.0.0.1":
-        client_ip = None
+    client_ip = None
+    if request.client and hasattr(request.client, 'host'):
+        client_ip = request.client.host
+        if client_ip in ["127.0.0.1", "::1"]:
+            client_ip = None
     
     # Get location
     location = await location_service.get_user_location(
@@ -431,30 +463,34 @@ async def get_area_restaurant_analysis(
     - **radius**: Search radius in miles
     """
     
-    # Get restaurants in the area (basic info only for analysis)
-    restaurants_response = await find_restaurants(lat, lng, radius, max_results=20)
-    
-    # Convert to format suitable for AI analysis
-    restaurants_for_analysis = []
-    for restaurant in restaurants_response.restaurants:
-        restaurants_for_analysis.append({
-            "name": restaurant.name,
-            "rating": restaurant.rating,
-            "distance_miles": restaurant.distance_miles,
-            "cuisine_types": restaurant.cuisine_types,
-            "price_level": restaurant.price_level
-        })
-    
-    # Get AI analysis of the area
-    area_analysis = await analyze_restaurant_area(restaurants_for_analysis)
-    
-    return {
-        "search_location": {"lat": lat, "lng": lng},
-        "radius_miles": radius,
-        "restaurants_analyzed": len(restaurants_for_analysis),
-        "area_analysis": area_analysis,
-        "timestamp": datetime.now()
-    }
+    try:
+        # Get restaurants in the area (basic info only for analysis)
+        restaurants_response = await find_restaurants(lat, lng, radius, max_results=20)
+        
+        # Convert to format suitable for AI analysis
+        restaurants_for_analysis = []
+        for restaurant in restaurants_response.restaurants:
+            restaurants_for_analysis.append({
+                "name": restaurant.name,
+                "rating": restaurant.rating,
+                "distance_miles": restaurant.distance_miles,
+                "cuisine_types": restaurant.cuisine_types,
+                "price_level": restaurant.price_level
+            })
+        
+        # Get AI analysis of the area
+        area_analysis = await analyze_restaurant_area(restaurants_for_analysis)
+        
+        return {
+            "search_location": {"lat": lat, "lng": lng},
+            "radius_miles": radius,
+            "restaurants_analyzed": len(restaurants_for_analysis),
+            "area_analysis": area_analysis,
+            "timestamp": datetime.now()
+        }
+    except Exception as e:
+        logger.error(f"Error in area analysis: {e}")
+        raise HTTPException(status_code=500, detail=f"Error generating area analysis: {str(e)}")
 
 @app.get("/restaurant/{place_id}/reviews", response_model=Dict[str, Any])
 async def get_restaurant_reviews(
@@ -501,9 +537,8 @@ async def get_restaurant_reviews(
             "total_ratings": google_details.get("user_ratings_total")
         }
     
-    # Get Yelp reviews if requested (would need Yelp API implementation)
+    # Get Yelp reviews if requested (placeholder for future implementation)
     if "yelp" in sources:
-        # Placeholder for Yelp integration
         all_reviews["yelp"] = {
             "reviews": [],
             "total_count": 0,
@@ -518,13 +553,21 @@ async def get_restaurant_reviews(
         "timestamp": datetime.now()
     }
 
+@app.exception_handler(HTTPException)
+async def http_exception_handler(request, exc):
+    """Handle HTTP exceptions"""
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={"error": exc.detail, "status_code": exc.status_code}
+    )
+
 @app.exception_handler(Exception)
 async def global_exception_handler(request, exc):
     """Global exception handler"""
-    logger.error(f"Unhandled exception: {exc}")
+    logger.error(f"Unhandled exception: {exc}", exc_info=True)
     return JSONResponse(
         status_code=500,
-        content={"error": "Internal server error", "message": str(exc)}
+        content={"error": "Internal server error", "message": "An unexpected error occurred"}
     )
 
 if __name__ == "__main__":

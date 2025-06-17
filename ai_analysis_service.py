@@ -5,8 +5,8 @@ Handles AI-powered analysis of restaurant data and reviews using OpenAI GPT
 
 from openai import AsyncOpenAI
 import logging
-from typing import Dict, List, Optional, Any
-from pydantic import BaseModel
+from typing import Dict, List, Optional, Any, Union
+from pydantic import BaseModel, Field
 import os
 import json
 from datetime import datetime
@@ -25,7 +25,7 @@ class RestaurantAnalysis(BaseModel):
     recommendation: str
     best_for: List[str]  # "Date night", "Family dinner", "Business lunch", etc.
     price_range_assessment: str
-    confidence_score: float  # 0-1 based on amount of data available
+    confidence_score: float = Field(..., ge=0.0, le=1.0)  # 0-1 based on amount of data available
 
 class AIAnalysisService:
     def __init__(self):
@@ -48,7 +48,9 @@ class AIAnalysisService:
         
         # Extract reviews if available
         reviews_text = ""
-        google_reviews = restaurant_data.get("reviews_by_source", {}).get("google", {}).get("reviews", [])
+        reviews_by_source = restaurant_data.get("reviews_by_source", {})
+        google_reviews_data = reviews_by_source.get("google", {})
+        google_reviews = google_reviews_data.get("reviews", []) if isinstance(google_reviews_data, dict) else []
         
         if google_reviews:
             reviews_text = "\n\nRecent Google Reviews:\n"
@@ -66,7 +68,17 @@ class AIAnalysisService:
             3: "Expensive ($$$)",
             4: "Very Expensive ($$$$)"
         }
-        price_desc = price_descriptions.get(price_level, "Price level unknown")
+        
+        price_desc = "Price level unknown"  # Default value
+        
+        # Handle both int and string price levels
+        if isinstance(price_level, str) and price_level.isdigit():
+            price_level = int(price_level)
+            price_desc = price_descriptions.get(price_level, "Price level unknown")
+        elif isinstance(price_level, str):
+            price_desc = f"Price level: {price_level}"
+        elif isinstance(price_level, int):
+            price_desc = price_descriptions.get(price_level, "Price level unknown")
         
         prompt = f"""
 You are a professional restaurant critic and analyst. Please provide a comprehensive analysis of the following restaurant based on the available data:
@@ -108,7 +120,7 @@ Please analyze this restaurant and provide a structured response in the followin
     "recommendation": "[Who should visit this restaurant and why]",
     "best_for": ["[Occasion types - Date night, Family dinner, Business lunch, etc.]"],
     "price_range_assessment": "[Is pricing fair for what you get?]",
-    "confidence_score": "[0.0-1.0 based on amount of review data available]"
+    "confidence_score": [0.0-1.0 based on amount of review data available]
 }}
 
 Base your analysis on the actual review content, ratings, and restaurant information provided. Be honest about both positives and negatives. If there's limited data, reflect that in your confidence score.
@@ -127,11 +139,11 @@ Base your analysis on the actual review content, ratings, and restaurant informa
             prompt = self._create_analysis_prompt(restaurant_data)
             
             response = await self.client.chat.completions.create(
-                model="gpt-4",  # Use gpt-3.5-turbo for cheaper alternative
+                model="gpt-4o-mini",  # Use more cost-effective model as default
                 messages=[
                     {
                         "role": "system", 
-                        "content": "You are a professional restaurant critic who provides detailed, honest, and helpful restaurant analyses. Always respond with valid JSON."
+                        "content": "You are a professional restaurant critic who provides detailed, honest, and helpful restaurant analyses. Always respond with valid JSON that matches the exact schema provided."
                     },
                     {
                         "role": "user", 
@@ -147,27 +159,79 @@ Base your analysis on the actual review content, ratings, and restaurant informa
             if not analysis_text:
                 logger.error("Empty response from OpenAI")
                 return None
+            
             analysis_text = analysis_text.strip()
             
             # Try to parse as JSON
             try:
+                # Remove any markdown code block formatting if present
+                if analysis_text.startswith("```json"):
+                    analysis_text = analysis_text[7:]
+                if analysis_text.endswith("```"):
+                    analysis_text = analysis_text[:-3]
+                
                 analysis_dict = json.loads(analysis_text)
+                
+                # Validate and convert numeric strings to appropriate types
+                self._validate_analysis_dict(analysis_dict)
+                
                 return RestaurantAnalysis(**analysis_dict)
-            except json.JSONDecodeError:
+                
+            except json.JSONDecodeError as e:
+                logger.warning(f"JSON parsing error: {e}")
                 # If JSON parsing fails, try to extract JSON from the response
                 start_idx = analysis_text.find('{')
                 end_idx = analysis_text.rfind('}') + 1
                 if start_idx != -1 and end_idx != -1:
                     json_str = analysis_text[start_idx:end_idx]
-                    analysis_dict = json.loads(json_str)
-                    return RestaurantAnalysis(**analysis_dict)
+                    try:
+                        analysis_dict = json.loads(json_str)
+                        self._validate_analysis_dict(analysis_dict)
+                        return RestaurantAnalysis(**analysis_dict)
+                    except json.JSONDecodeError:
+                        logger.error("Could not extract valid JSON from AI response")
+                        return None
                 else:
-                    logger.error("Could not extract valid JSON from AI response")
+                    logger.error("Could not find JSON structure in AI response")
                     return None
             
         except Exception as e:
             logger.error(f"Error in AI analysis: {e}")
             return None
+    
+    def _validate_analysis_dict(self, analysis_dict: Dict[str, Any]) -> None:
+        """
+        Validate and clean the analysis dictionary from AI response
+        """
+        # Ensure confidence_score is a float between 0 and 1
+        if "confidence_score" in analysis_dict:
+            try:
+                confidence = float(analysis_dict["confidence_score"])
+                analysis_dict["confidence_score"] = max(0.0, min(1.0, confidence))
+            except (ValueError, TypeError):
+                analysis_dict["confidence_score"] = 0.5  # Default fallback
+        
+        # Ensure all required string fields exist
+        string_fields = ["overall_rating", "overall_summary", "recommendation", "price_range_assessment"]
+        for field in string_fields:
+            if field not in analysis_dict or not isinstance(analysis_dict[field], str):
+                analysis_dict[field] = "Not available"
+        
+        # Ensure all required list fields exist
+        list_fields = ["key_highlights", "potential_concerns", "best_for"]
+        for field in list_fields:
+            if field not in analysis_dict or not isinstance(analysis_dict[field], list):
+                analysis_dict[field] = []
+        
+        # Ensure all required dict fields exist with proper structure
+        dict_fields = ["food_quality", "service_quality", "atmosphere", "value_for_money"]
+        for field in dict_fields:
+            if field not in analysis_dict or not isinstance(analysis_dict[field], dict):
+                analysis_dict[field] = {
+                    "score": "5",
+                    "highlights": "Not analyzed",
+                    "concerns": "No data available"
+                }
     
     def _create_summary_prompt(self, restaurants: List[Dict[str, Any]]) -> str:
         """
@@ -180,8 +244,14 @@ Base your analysis on the actual review content, ratings, and restaurant informa
             distance = restaurant.get("distance_miles", "N/A")
             cuisine = restaurant.get("cuisine_types", [])
             
+            # Handle different cuisine type formats
+            if isinstance(cuisine, list):
+                cuisine_str = ', '.join(cuisine[:2])
+            else:
+                cuisine_str = str(cuisine)
+            
             restaurant_summaries.append(
-                f"- {name}: {rating}/5 stars, {distance} miles away, Cuisine: {', '.join(cuisine[:2])}"
+                f"- {name}: {rating}/5 stars, {distance} miles away, Cuisine: {cuisine_str}"
             )
         
         restaurants_text = "\n".join(restaurant_summaries)
@@ -216,7 +286,7 @@ Keep the response concise and helpful for someone looking for dining options.
             prompt = self._create_summary_prompt(restaurants)
             
             response = await self.client.chat.completions.create(
-                model="gpt-3.5-turbo",
+                model="gpt-4o-mini",  # Use cost-effective model for area analysis
                 messages=[
                     {
                         "role": "system",
@@ -246,6 +316,13 @@ Keep the response concise and helpful for someone looking for dining options.
         total_ratings = restaurant_data.get("total_ratings", 0)
         price_level = restaurant_data.get("price_level", 2)
         
+        # Handle string ratings
+        if isinstance(rating, str):
+            try:
+                rating = float(rating)
+            except ValueError:
+                rating = 0
+        
         # Simple scoring based on Google rating
         if rating >= 4.5:
             overall_rating = "Excellent"
@@ -264,15 +341,39 @@ Keep the response concise and helpful for someone looking for dining options.
             3: "upscale",
             4: "fine dining"
         }
-        price_desc = price_descriptions.get(price_level, "moderately priced")
+        
+        # Handle string price levels
+        price_desc = "moderately priced"  # Default value
+        if isinstance(price_level, str) and price_level.isdigit():
+            price_level = int(price_level)
+            price_desc = price_descriptions.get(price_level, "moderately priced")
+        elif isinstance(price_level, str):
+            price_desc = price_level.lower()
+        elif isinstance(price_level, int):
+            price_desc = price_descriptions.get(price_level, "moderately priced")
         
         return RestaurantAnalysis(
             overall_rating=overall_rating,
             overall_summary=f"This {price_desc} restaurant has a {rating}/5 star rating based on {total_ratings} reviews.",
-            food_quality={"score": int(rating * 2), "highlights": "Based on customer ratings", "concerns": "Limited analysis available"},
-            service_quality={"score": int(rating * 2), "highlights": "Based on overall ratings", "concerns": "No specific service data"},
-            atmosphere={"score": int(rating * 2), "highlights": "Customer-rated experience", "concerns": "No detailed atmosphere data"},
-            value_for_money={"score": 7, "assessment": f"Appears to offer good value in the {price_desc} category"},
+            food_quality={
+                "score": str(int(rating * 2)), 
+                "highlights": "Based on customer ratings", 
+                "concerns": "Limited analysis available"
+            },
+            service_quality={
+                "score": str(int(rating * 2)), 
+                "highlights": "Based on overall ratings", 
+                "concerns": "No specific service data"
+            },
+            atmosphere={
+                "score": str(int(rating * 2)), 
+                "highlights": "Customer-rated experience", 
+                "concerns": "No detailed atmosphere data"
+            },
+            value_for_money={
+                "score": "7", 
+                "assessment": f"Appears to offer good value in the {price_desc} category"
+            },
             key_highlights=[f"{rating}/5 star rating", f"{total_ratings} customer reviews", f"{price_desc} pricing"],
             potential_concerns=["Limited analysis without detailed reviews"],
             recommendation=f"Consider visiting if you enjoy {price_desc} dining options",
