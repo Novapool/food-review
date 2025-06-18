@@ -32,12 +32,13 @@ class LocationService:
         """
         try:
             # Use ipapi.co for IP geolocation (free tier available)
+            # Changed to HTTPS to avoid 301 redirect
             if ip_address:
-                url = f"http://ipapi.co/{ip_address}/json/"
+                url = f"https://ipapi.co/{ip_address}/json/"
             else:
-                url = "http://ipapi.co/json/"
+                url = "https://ipapi.co/json/"
             
-            async with httpx.AsyncClient() as client:
+            async with httpx.AsyncClient(follow_redirects=True) as client:
                 response = await client.get(url, timeout=10)
                 response.raise_for_status()
                 data = response.json()

@@ -71,6 +71,13 @@ class ErrorResponse(BaseModel):
     error: str
     message: str
 
+# New response model for the health check endpoint
+class HealthCheckResponse(BaseModel):
+    status: str
+    message: str
+    version: str
+    features: List[str]
+
 # Helper Functions
 def calculate_distance(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
     """Calculate distance between two points in miles using Haversine formula"""
@@ -165,20 +172,20 @@ async def get_place_details(place_id: str, include_reviews: bool = True) -> Dict
             return {}
 
 # API Endpoints
-@app.get("/", response_model=Dict[str, str])
+@app.get("/", response_model=HealthCheckResponse)
 async def root():
     """Health check endpoint"""
-    return {
-        "status": "healthy",
-        "message": "Restaurant Finder API is running",
-        "version": "2.0.0",
-        "features": [
+    return HealthCheckResponse(
+        status="healthy",
+        message="Restaurant Finder API is running",
+        version="2.0.0",
+        features=[
             "automatic location detection",
             "AI restaurant analysis", 
             "area dining scene analysis",
             "multi-source reviews"
         ]
-    }
+    )
 
 @app.get("/restaurants/auto", response_model=RestaurantSearchResponse)
 async def find_restaurants_auto_location(
