@@ -6,65 +6,78 @@
 //
 
 import SwiftUI
+import SwiftData
 
 struct ContentView: View {
+    @Environment(\.modelContext) private var modelContext
+    @Query private var items: [Item]
+    @State private var showingMap = false
+
     var body: some View {
-        NavigationView {
-            VStack(spacing: 20) {
-                // App Logo/Title
-                VStack {
-                    Image(systemName: "fork.knife.circle.fill")
-                        .font(.system(size: 60))
-                        .foregroundColor(.orange)
-                    
-                    Text("Restaurant Finder")
-                        .font(.largeTitle)
-                        .fontWeight(.bold)
-                        .foregroundColor(.primary)
-                }
-                .padding(.top, 50)
-                
-                Spacer()
-                
-                // Welcome Message
-                VStack(spacing: 10) {
-                    Text("Welcome!")
-                        .font(.title2)
-                        .fontWeight(.semibold)
-                    
-                    Text("Find amazing restaurants near you")
-                        .font(.body)
-                        .foregroundColor(.secondary)
-                        .multilineTextAlignment(.center)
-                        .padding(.horizontal, 40)
+        NavigationSplitView {
+            VStack {
+                // Your existing list content
+                List {
+                    ForEach(items) { item in
+                        NavigationLink {
+                            Text("Item at \(item.timestamp, format: Date.FormatStyle(date: .numeric, time: .standard))")
+                        } label: {
+                            Text(item.timestamp, format: Date.FormatStyle(date: .numeric, time: .standard))
+                        }
+                    }
+                    .onDelete(perform: deleteItems)
                 }
                 
-                Spacer()
-                
-                // Placeholder Button for Future Features
+                // New Map Button
                 Button(action: {
-                    print("Find Restaurants tapped!")
+                    showingMap = true
                 }) {
                     HStack {
-                        Image(systemName: "location.magnifyingglass")
-                        Text("Find Restaurants")
+                        Image(systemName: "map.fill")
+                        Text("Show Map")
                     }
-                    .font(.headline)
                     .foregroundColor(.white)
                     .padding()
-                    .frame(maxWidth: .infinity)
-                    .background(Color.orange)
-                    .cornerRadius(12)
+                    .background(Color.blue)
+                    .cornerRadius(10)
                 }
-                .padding(.horizontal, 40)
-                .padding(.bottom, 50)
+                .padding()
             }
-            .navigationTitle("")
-            .navigationBarHidden(true)
+            .toolbar {
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    EditButton()
+                }
+                ToolbarItem {
+                    Button(action: addItem) {
+                        Label("Add Item", systemImage: "plus")
+                    }
+                }
+            }
+            .sheet(isPresented: $showingMap) {
+                MapView()
+            }
+        } detail: {
+            Text("Select an item")
+        }
+    }
+
+    private func addItem() {
+        withAnimation {
+            let newItem = Item(timestamp: Date())
+            modelContext.insert(newItem)
+        }
+    }
+
+    private func deleteItems(offsets: IndexSet) {
+        withAnimation {
+            for index in offsets {
+                modelContext.delete(items[index])
+            }
         }
     }
 }
 
 #Preview {
     ContentView()
+        .modelContainer(for: Item.self, inMemory: true)
 }
