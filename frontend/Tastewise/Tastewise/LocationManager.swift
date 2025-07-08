@@ -7,16 +7,17 @@
 
 import CoreLocation
 import Foundation
+import Observation
 
 @Observable
 class LocationManager: NSObject, CLLocationManagerDelegate {
     
     private let locationManager = CLLocationManager()
     
-    @Published var location: CLLocation?
-    @Published var authorizationStatus: CLAuthorizationStatus = .notDetermined
-    @Published var locationError: String?
-    @Published var isLoading = false
+    var location: CLLocation?
+    var authorizationStatus: CLAuthorizationStatus = .notDetermined
+    var locationError: String?
+    var isLoading = false
     
     override init() {
         super.init()

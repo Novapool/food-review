@@ -1,0 +1,29 @@
+{
+  "name": "tastewise-backend",
+  "version": "1.0.0",
+  "description": "TypeScript backend for Tastewise food review app using Supabase Edge Functions",
+  "type": "module",
+  "scripts": {
+    "dev": "deno task dev",
+    "deploy": "supabase functions deploy",
+    "deploy:location": "supabase functions deploy handle-location",
+    "logs": "supabase functions logs",
+    "logs:location": "supabase functions logs handle-location"
+  },
+  "keywords": [
+    "supabase",
+    "edge-functions",
+    "deno",
+    "typescript",
+    "food-review",
+    "location-services"
+  ],
+  "author": "Laith Assaf",
+  "license": "MIT",
+  "devDependencies": {
+    "@types/node": "^20.0.0"
+  },
+  "engines": {
+    "deno": ">=1.30.0"
+  }
+}

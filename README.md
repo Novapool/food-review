@@ -1,13 +1,13 @@
-# Restaurant Finder API v2.0
+# Tastewise - Food Review App
 
-A comprehensive MVP backend for finding restaurants with automatic location detection and AI-powered analysis.
+A comprehensive food review application with location-based restaurant discovery, featuring a native iOS app and TypeScript backend powered by Supabase Edge Functions.
 
-## 🚀 New Features
+## 🚀 Features
 
-- **Automatic Location Detection** - Uses IP geolocation and address geocoding
-- **AI Restaurant Analysis** - Detailed analysis using OpenAI GPT
-- **Area Restaurant Analysis** - Overview of dining scene in any area
-- **Enhanced Review Integration** - Structured review data from Google Places
+- **Native iOS App** - SwiftUI-based mobile application with Core Location integration
+- **Location Services** - Real-time GPS location tracking and Supabase integration
+- **TypeScript Backend** - Serverless Edge Functions using Deno runtime
+- **Modern Architecture** - @Observable pattern for reactive UI updates
 
 ## Features
 
@@ -42,122 +42,102 @@ A comprehensive MVP backend for finding restaurants with automatic location dete
 
 ### 2. Install Dependencies
 
-#### Option A: Using Poetry (Recommended)
+#### Backend (TypeScript/Deno)
 ```bash
-# Install Poetry if you haven't already
-curl -sSL https://install.python-poetry.org | python3 -
+# Install Deno
+curl -fsSL https://deno.land/install.sh | sh
 
-# Install dependencies
-poetry install
-
-# Activate virtual environment
-poetry shell
+# Install Supabase CLI
+npm install -g supabase
 ```
 
-#### Option B: Using pip
+#### iOS App
 ```bash
-# Create virtual environment
-python -m venv venv
-
-# Activate virtual environment
-# On Windows:
-venv\Scripts\activate
-# On macOS/Linux:
-source venv/bin/activate
-
-# Install dependencies
-pip install -r requirements.txt
+# Open the Xcode project
+open frontend/Tastewise/Tastewise.xcodeproj
 ```
 
-### 3. Configure Environment
+### 3. Configure Supabase
 
-1. Copy `.env.example` to `.env`
-2. Add your API keys:
-   ```
-   GOOGLE_PLACES_API_KEY=your_actual_google_key_here
-   OPENAI_API_KEY=your_actual_openai_key_here
+1. Set up your Supabase project (if not already done)
+2. Update the Supabase URL and API key in `frontend/Tastewise/Tastewise/SupabaseService.swift`
+3. Deploy the Edge Function:
+   ```bash
+   cd backend
+   supabase functions deploy handle-location
    ```
 
 ### 4. Project Structure
 
-Make sure you have these files in your project directory:
 ```
-restaurant-finder-api/
-├── main.py                 # Main FastAPI application
-├── location_service.py     # Location detection service
-├── ai_analysis_service.py  # AI analysis service
-├── .env                    # Environment variables (create this)
-├── requirements.txt        # Dependencies
-└── README.md              # This file
+tastewise/
+├── frontend/
+│   └── Tastewise/          # iOS SwiftUI Application
+│       ├── Tastewise/
+│       │   ├── ContentView.swift
+│       │   ├── LocationManager.swift
+│       │   ├── SupabaseService.swift
+│       │   ├── Restaurant.swift
+│       │   └── Item.swift
+│       └── Tastewise.xcodeproj
+├── backend/
+│   ├── supabase/
+│   │   ├── functions/
+│   │   │   └── handle-location/
+│   │   │       └── index.ts    # Location handling endpoint
+│   │   └── _shared/
+│   │       └── cors.ts         # CORS configuration
+│   ├── deno.json              # Deno configuration
+│   ├── package.json           # Project metadata
+│   └── README.md              # Backend documentation
+└── README.md                  # This file
 ```
 
-### 5. Run the Server
+### 5. Run the Application
 
-#### Development Mode
+#### iOS App
 ```bash
-# With Poetry
-poetry run uvicorn main:app --reload
-
-# With pip
-uvicorn main:app --reload
+# Open Xcode and run the app
+open frontend/Tastewise/Tastewise.xcodeproj
+# Then press Cmd+R to build and run
 ```
 
-#### Production Mode
+#### Backend Development
 ```bash
-uvicorn main:app --host 0.0.0.0 --port 8000
+# Test the function locally
+cd backend
+deno task dev
+
+# Or run Supabase locally
+supabase start
+supabase functions serve
 ```
 
-#### With Docker
+### 6. Test the Backend
+
+#### Test Location Function
 ```bash
-# Build and run
-docker-compose up --build
+# Test the location endpoint
+curl -X POST https://wwvabzmpqhchtftesxsx.supabase.co/functions/v1/handle-location \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer YOUR_SUPABASE_ANON_KEY" \
+  -d '{"latitude": 37.7749, "longitude": -122.4194, "accuracy": 10.0}'
 
-# Or run in background
-docker-compose up -d
+# Local testing (if running supabase locally)
+curl -X POST http://localhost:54321/functions/v1/handle-location \
+  -H "Content-Type: application/json" \
+  -d '{"latitude": 37.7749, "longitude": -122.4194, "accuracy": 10.0}'
 ```
 
-### 6. Test the API
+## 🎯 Current API Endpoints
 
-The server will start on `http://localhost:8000`
+### Supabase Edge Functions
+- `POST /functions/v1/handle-location` - Receive and validate location data from iOS app
 
-- **API Documentation**: http://localhost:8000/docs
-- **Alternative Docs**: http://localhost:8000/redoc
-- **Health Check**: http://localhost:8000/
-
-#### Example API Calls
-
-```bash
-# Auto-detect location and find restaurants
-curl "http://localhost:8000/restaurants/auto"
-
-# Auto-detect with specific address
-curl "http://localhost:8000/restaurants/auto?address=Times Square, NYC"
-
-# Get AI analysis of a restaurant
-curl "http://localhost:8000/restaurant/ChIJN1t_tDeuEmsRUsoyG83frY4/analysis"
-
-# Get area restaurant analysis
-curl "http://localhost:8000/restaurants/area-analysis?lat=40.7580&lng=-73.9855"
-
-# Detect user location
-curl "http://localhost:8000/location/detect"
-```
-
-## 🎯 API Endpoints
-
-### Core Endpoints
-- `GET /` - Health check
-- `GET /restaurants` - Find restaurants by coordinates (original)
-- `GET /restaurants/auto` - Find restaurants with auto location detection
-- `GET /location/detect` - Detect user location
-
-### Restaurant Details
-- `GET /restaurant/{place_id}` - Get restaurant details
-- `GET /restaurant/{place_id}/reviews` - Get reviews from multiple sources
-- `GET /restaurant/{place_id}/analysis` - Get AI analysis of restaurant
-
-### Area Analysis
-- `GET /restaurants/area-analysis` - Get AI analysis of restaurant scene in area
+### Planned Endpoints (Future Implementation)
+- `POST /functions/v1/find-restaurants` - Find restaurants by coordinates
+- `POST /functions/v1/restaurant-details` - Get detailed restaurant information
+- `POST /functions/v1/restaurant-analysis` - Get AI analysis of restaurant
 
 ## Cost Estimation
 

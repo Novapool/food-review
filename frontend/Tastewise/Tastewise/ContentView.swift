@@ -12,7 +12,7 @@ import CoreLocation
 struct ContentView: View {
     @Environment(\.modelContext) private var modelContext
     @Query private var restaurants: [Restaurant]
-    @StateObject private var locationManager = LocationManager()
+    @State private var locationManager = LocationManager()
     
     @State private var selectedSortOption: RestaurantSortOption = .nearby
     @State private var selectedCuisineFilter: CuisineFilter = .all
