@@ -18,6 +18,11 @@ class LocationManager: NSObject, CLLocationManagerDelegate {
     var authorizationStatus: CLAuthorizationStatus = .notDetermined
     var locationError: String?
     var isLoading = false
+    var isLoadingRestaurants = false
+    var restaurantError: String?
+    
+    // Restaurant search callback
+    var onRestaurantsLoaded: ((RestaurantSearchResponse) -> Void)?
     
     override init() {
         super.init()
@@ -89,9 +94,12 @@ class LocationManager: NSObject, CLLocationManagerDelegate {
         location = newLocation
         isLoading = false
         
-        // Send location to Supabase
+        print("📍 Location updated: \(newLocation.coordinate.latitude), \(newLocation.coordinate.longitude)")
+        
+        // Send location to Supabase and search for restaurants
         Task {
             await sendLocationToSupabase(location: newLocation)
+            await searchNearbyRestaurants()
         }
     }
     
@@ -99,6 +107,34 @@ class LocationManager: NSObject, CLLocationManagerDelegate {
         locationError = error.localizedDescription
         isLoading = false
         print("Location error: \(error.localizedDescription)")
+    }
+    
+    // MARK: - Restaurant Search
+    
+    func searchNearbyRestaurants() async {
+        guard let currentLocation = location else {
+            restaurantError = "Location not available"
+            return
+        }
+        
+        isLoadingRestaurants = true
+        restaurantError = nil
+        
+        do {
+            let searchResponse = try await SupabaseService.shared.searchRestaurants(location: currentLocation)
+            
+            await MainActor.run {
+                self.isLoadingRestaurants = false
+                self.onRestaurantsLoaded?(searchResponse)
+            }
+            
+        } catch {
+            await MainActor.run {
+                self.isLoadingRestaurants = false
+                self.restaurantError = error.localizedDescription
+                print("❌ Failed to search restaurants: \(error)")
+            }
+        }
     }
     
     // MARK: - Send to Supabase

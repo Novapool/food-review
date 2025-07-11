@@ -18,7 +18,6 @@ struct ContentView: View {
     @State private var selectedCuisineFilter: CuisineFilter = .all
     @State private var searchText = ""
     @State private var showingLocationAlert = false
-    @State private var isLoadingRestaurants = false
     
     var body: some View {
         NavigationStack {
@@ -46,6 +45,7 @@ struct ContentView: View {
                 }
             }
             .onAppear {
+                setupLocationManager()
                 locationManager.requestLocation()
                 
                 // Run test in development
@@ -55,6 +55,38 @@ struct ContentView: View {
                 }
                 #endif
             }
+        }
+    }
+    
+    // MARK: - Setup
+    
+    private func setupLocationManager() {
+        locationManager.onRestaurantsLoaded = { searchResponse in
+            Task { @MainActor in
+                await loadRestaurantsFromAPI(searchResponse)
+            }
+        }
+    }
+    
+    private func loadRestaurantsFromAPI(_ searchResponse: RestaurantSearchResponse) async {
+        // Clear existing restaurants
+        try? modelContext.delete(model: Restaurant.self)
+        
+        // Convert API restaurants to local models and save
+        for apiRestaurant in searchResponse.restaurants {
+            let restaurant = apiRestaurant.toRestaurant(
+                isRecommended: apiRestaurant.rating ?? 0 > 4.5,
+                isPopular: apiRestaurant.totalRatings ?? 0 > 100
+            )
+            modelContext.insert(restaurant)
+        }
+        
+        // Save to local database
+        do {
+            try modelContext.save()
+            print("✅ Saved \(searchResponse.restaurants.count) restaurants to local database")
+        } catch {
+            print("❌ Failed to save restaurants: \(error)")
         }
     }
     
@@ -135,7 +167,10 @@ struct ContentView: View {
                 if locationManager.location == nil && !locationManager.isLoading {
                     // Location Capture View
                     locationCaptureView
-                } else if restaurants.isEmpty && !isLoadingRestaurants {
+                } else if locationManager.isLoadingRestaurants {
+                    // Loading restaurants
+                    loadingRestaurantsView
+                } else if restaurants.isEmpty {
                     // Empty State
                     emptyStateView
                 } else {
@@ -147,10 +182,16 @@ struct ContentView: View {
                                 print("Tapped restaurant: \(restaurant.name)")
                             }
                     }
+                    
+                    // Refresh Button
+                    refreshButton
                 }
             }
             .padding(.horizontal, 20)
             .padding(.bottom, 100) // Space for bottom navigation
+        }
+        .refreshable {
+            await refreshRestaurants()
         }
     }
     
@@ -234,15 +275,94 @@ struct ContentView: View {
                 .font(.subheadline)
                 .foregroundColor(.secondary)
                 .multilineTextAlignment(.center)
+            
+            if let error = locationManager.restaurantError {
+                Text("Error: \(error)")
+                    .font(.caption)
+                    .foregroundColor(.red)
+                    .padding(.top, 8)
+            }
+            
+            Button("Try Again") {
+                Task {
+                    await refreshRestaurants()
+                }
+            }
+            .padding(.top, 16)
+            .buttonStyle(.borderedProminent)
         }
         .padding(.top, 100)
+    }
+    
+    // MARK: - Loading Restaurants View
+    
+    private var loadingRestaurantsView: some View {
+        VStack(spacing: 20) {
+            Spacer()
+            
+            VStack(spacing: 16) {
+                ProgressView()
+                    .scaleEffect(1.5)
+                    .tint(.blue)
+                
+                Text("Finding Restaurants Near You")
+                    .font(.title2)
+                    .fontWeight(.semibold)
+                
+                Text("Searching for the best dining options in your area...")
+                    .font(.subheadline)
+                    .foregroundColor(.secondary)
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal)
+            }
+            
+            Spacer()
+        }
+    }
+    
+    // MARK: - Refresh Button
+    
+    private var refreshButton: some View {
+        Button(action: {
+            Task {
+                await refreshRestaurants()
+            }
+        }) {
+            HStack {
+                Image(systemName: "arrow.clockwise")
+                Text("Refresh Restaurants")
+            }
+            .font(.subheadline)
+            .fontWeight(.medium)
+            .foregroundColor(.blue)
+            .padding(.vertical, 12)
+            .padding(.horizontal, 24)
+            .background(Color.blue.opacity(0.1))
+            .cornerRadius(12)
+        }
+        .padding(.top, 20)
+    }
+    
+    // MARK: - Restaurant Search Functions
+    
+    private func refreshRestaurants() async {
+        guard let location = locationManager.location else {
+            locationManager.requestLocation()
+            return
+        }
+        
+        await locationManager.searchNearbyRestaurants()
     }
     
     // MARK: - Computed Properties
     
     private var locationText: String {
         if let location = locationManager.location {
-            return "Current location • 10 miles"
+            if locationManager.isLoadingRestaurants {
+                return "Searching restaurants • 10 miles"
+            } else {
+                return "Current location • 10 miles"
+            }
         } else if locationManager.isLoading {
             return "Getting your location..."
         } else {
