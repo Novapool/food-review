@@ -68,11 +68,41 @@ final class Restaurant {
 // MARK: - API Response Models
 
 struct RestaurantSearchResponse: Codable {
+    let success: Bool?
     let restaurants: [RestaurantAPI]
-    let totalFound: Int
-    let searchLocation: SearchLocation
-    let radiusMiles: Double
-    let timestamp: String
+    let totalFound: Int?
+    let searchLocation: SearchLocation?
+    let radiusMiles: Double?
+    let timestamp: String?
+    let message: String?
+    
+    enum CodingKeys: String, CodingKey {
+        case success
+        case restaurants
+        case totalFound = "total_found"
+        case searchLocation = "search_location"
+        case radiusMiles = "radius_miles"
+        case timestamp
+        case message
+    }
+    
+    // Custom initializer to handle missing fields gracefully
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        
+        // Handle success field (may be missing)
+        success = try container.decodeIfPresent(Bool.self, forKey: .success)
+        
+        // Required field
+        restaurants = try container.decode([RestaurantAPI].self, forKey: .restaurants)
+        
+        // Optional fields
+        totalFound = try container.decodeIfPresent(Int.self, forKey: .totalFound)
+        searchLocation = try container.decodeIfPresent(SearchLocation.self, forKey: .searchLocation)
+        radiusMiles = try container.decodeIfPresent(Double.self, forKey: .radiusMiles)
+        timestamp = try container.decodeIfPresent(String.self, forKey: .timestamp)
+        message = try container.decodeIfPresent(String.self, forKey: .message)
+    }
 }
 
 struct RestaurantAPI: Codable {
@@ -89,15 +119,48 @@ struct RestaurantAPI: Codable {
     let website: String?
     let photos: [String]
     let distanceMiles: Double?
+    let isOpen: Bool?
     
     enum CodingKeys: String, CodingKey {
         case placeId = "place_id"
-        case name, address, latitude, longitude, rating
+        case name
+        case address = "formatted_address"  // ✅ Fixed: Map to formatted_address
+        case latitude
+        case longitude
+        case rating
         case totalRatings = "total_ratings"
         case priceLevel = "price_level"
         case cuisineTypes = "cuisine_types"
-        case phone, website, photos
+        case phone
+        case website
+        case photos
         case distanceMiles = "distance_miles"
+        case isOpen = "is_open"
+    }
+    
+    // Custom initializer for flexible parsing
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        
+        // Required fields
+        placeId = try container.decode(String.self, forKey: .placeId)
+        name = try container.decode(String.self, forKey: .name)
+        latitude = try container.decode(Double.self, forKey: .latitude)
+        longitude = try container.decode(Double.self, forKey: .longitude)
+        
+        // Address handling - the CodingKey is already mapped to formatted_address
+        address = try container.decodeIfPresent(String.self, forKey: .address) ?? "Address not available"
+        
+        // Optional fields with safe defaults
+        rating = try container.decodeIfPresent(Double.self, forKey: .rating)
+        totalRatings = try container.decodeIfPresent(Int.self, forKey: .totalRatings)
+        priceLevel = try container.decodeIfPresent(Int.self, forKey: .priceLevel)
+        cuisineTypes = try container.decodeIfPresent([String].self, forKey: .cuisineTypes) ?? []
+        phone = try container.decodeIfPresent(String.self, forKey: .phone)
+        website = try container.decodeIfPresent(String.self, forKey: .website)
+        photos = try container.decodeIfPresent([String].self, forKey: .photos) ?? []
+        distanceMiles = try container.decodeIfPresent(Double.self, forKey: .distanceMiles)
+        isOpen = try container.decodeIfPresent(Bool.self, forKey: .isOpen)
     }
 }
 
