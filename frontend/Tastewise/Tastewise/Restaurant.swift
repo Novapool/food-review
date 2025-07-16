@@ -28,6 +28,9 @@ final class Restaurant {
     var isRecommended: Bool
     var isPopular: Bool
     var createdAt: Date
+    var lastSeen: Date
+    var searchCount: Int
+    var cacheLocations: [String]
     
     init(
         placeId: String,
@@ -62,6 +65,9 @@ final class Restaurant {
         self.isRecommended = isRecommended
         self.isPopular = isPopular
         self.createdAt = Date()
+        self.lastSeen = Date()
+        self.searchCount = 0
+        self.cacheLocations = []
     }
 }
 
@@ -102,6 +108,25 @@ struct RestaurantSearchResponse: Codable {
         radiusMiles = try container.decodeIfPresent(Double.self, forKey: .radiusMiles)
         timestamp = try container.decodeIfPresent(String.self, forKey: .timestamp)
         message = try container.decodeIfPresent(String.self, forKey: .message)
+    }
+    
+    // Custom initializer for creating from cache results
+    init(
+        success: Bool? = true,
+        restaurants: [RestaurantAPI],
+        totalFound: Int? = nil,
+        searchLocation: SearchLocation? = nil,
+        radiusMiles: Double? = nil,
+        timestamp: String? = nil,
+        message: String? = nil
+    ) {
+        self.success = success
+        self.restaurants = restaurants
+        self.totalFound = totalFound
+        self.searchLocation = searchLocation
+        self.radiusMiles = radiusMiles
+        self.timestamp = timestamp
+        self.message = message
     }
 }
 
@@ -161,6 +186,39 @@ struct RestaurantAPI: Codable {
         photos = try container.decodeIfPresent([String].self, forKey: .photos) ?? []
         distanceMiles = try container.decodeIfPresent(Double.self, forKey: .distanceMiles)
         isOpen = try container.decodeIfPresent(Bool.self, forKey: .isOpen)
+    }
+    
+    // Custom initializer for creating from Restaurant objects
+    init(
+        placeId: String,
+        name: String,
+        address: String,
+        latitude: Double,
+        longitude: Double,
+        rating: Double? = nil,
+        totalRatings: Int? = nil,
+        priceLevel: Int? = nil,
+        cuisineTypes: [String] = [],
+        phone: String? = nil,
+        website: String? = nil,
+        photos: [String] = [],
+        distanceMiles: Double? = nil,
+        isOpen: Bool? = nil
+    ) {
+        self.placeId = placeId
+        self.name = name
+        self.address = address
+        self.latitude = latitude
+        self.longitude = longitude
+        self.rating = rating
+        self.totalRatings = totalRatings
+        self.priceLevel = priceLevel
+        self.cuisineTypes = cuisineTypes
+        self.phone = phone
+        self.website = website
+        self.photos = photos
+        self.distanceMiles = distanceMiles
+        self.isOpen = isOpen
     }
 }
 
@@ -283,6 +341,28 @@ extension RestaurantAPI {
             distanceMiles: distanceMiles,
             isRecommended: isRecommended,
             isPopular: isPopular
+        )
+    }
+}
+
+// Extension to convert Restaurant back to RestaurantAPI for compatibility
+extension Restaurant {
+    func toRestaurantAPI() -> RestaurantAPI {
+        return RestaurantAPI(
+            placeId: placeId,
+            name: name,
+            address: address,
+            latitude: latitude,
+            longitude: longitude,
+            rating: rating,
+            totalRatings: totalRatings,
+            priceLevel: priceLevel,
+            cuisineTypes: cuisineTypes,
+            phone: phone,
+            website: website,
+            photos: photos,
+            distanceMiles: distanceMiles,
+            isOpen: nil
         )
     }
 }

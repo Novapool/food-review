@@ -8,6 +8,7 @@
 import CoreLocation
 import Foundation
 import Observation
+import SwiftData
 
 @Observable
 class LocationManager: NSObject, CLLocationManagerDelegate {
@@ -24,11 +25,20 @@ class LocationManager: NSObject, CLLocationManagerDelegate {
     // Restaurant search callback
     var onRestaurantsLoaded: ((RestaurantSearchResponse) -> Void)?
     
+    // ModelContext for cache operations
+    private var modelContext: ModelContext?
+    
     override init() {
         super.init()
         locationManager.delegate = self
         locationManager.desiredAccuracy = kCLLocationAccuracyBest
         locationManager.distanceFilter = 10.0 // Only update if moved 10 meters
+    }
+    
+    // MARK: - ModelContext Setup
+    
+    func setModelContext(_ context: ModelContext) {
+        self.modelContext = context
     }
     
     func requestLocation() {
@@ -117,15 +127,55 @@ class LocationManager: NSObject, CLLocationManagerDelegate {
             return
         }
         
+        guard let context = modelContext else {
+            restaurantError = "Database context not available"
+            return
+        }
+        
         isLoadingRestaurants = true
         restaurantError = nil
         
         do {
-            let searchResponse = try await SupabaseService.shared.searchRestaurants(location: currentLocation)
+            // Use RestaurantCacheManager instead of direct API call
+            let searchResult = try await RestaurantCacheManager.shared.searchRestaurants(
+                location: currentLocation,
+                context: context
+            )
+            
+            // Convert RestaurantSearchResult back to RestaurantSearchResponse for compatibility
+            let compatibleResponse = RestaurantSearchResponse(
+                success: true,
+                restaurants: searchResult.restaurants.map { restaurant in
+                    RestaurantAPI(
+                        placeId: restaurant.placeId,
+                        name: restaurant.name,
+                        address: restaurant.address,
+                        latitude: restaurant.latitude,
+                        longitude: restaurant.longitude,
+                        rating: restaurant.rating,
+                        totalRatings: restaurant.totalRatings,
+                        priceLevel: restaurant.priceLevel,
+                        cuisineTypes: restaurant.cuisineTypes,
+                        phone: restaurant.phone,
+                        website: restaurant.website,
+                        photos: restaurant.photos,
+                        distanceMiles: restaurant.distanceMiles,
+                        isOpen: nil
+                    )
+                },
+                totalFound: searchResult.totalFound,
+                searchLocation: SearchLocation(
+                    lat: searchResult.searchLocation.coordinate.latitude,
+                    lng: searchResult.searchLocation.coordinate.longitude
+                ),
+                radiusMiles: searchResult.searchRadius * 0.000621371, // Convert meters to miles
+                timestamp: ISO8601DateFormatter().string(from: Date()),
+                message: searchResult.isFromCache ? "Loaded from cache" : "Loaded from API"
+            )
             
             await MainActor.run {
                 self.isLoadingRestaurants = false
-                self.onRestaurantsLoaded?(searchResponse)
+                self.onRestaurantsLoaded?(compatibleResponse)
             }
             
         } catch {

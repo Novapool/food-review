@@ -14,6 +14,7 @@ struct TastewiseApp: App {
         let schema = Schema([
             Item.self,
             Restaurant.self,
+            LocationCache.self,
         ])
         let modelConfiguration = ModelConfiguration(schema: schema, isStoredInMemoryOnly: false)
 

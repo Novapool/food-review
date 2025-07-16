@@ -61,6 +61,7 @@ struct ContentView: View {
     // MARK: - Setup
     
     private func setupLocationManager() {
+        locationManager.setModelContext(modelContext)
         locationManager.onRestaurantsLoaded = { searchResponse in
             Task { @MainActor in
                 await loadRestaurantsFromAPI(searchResponse)
@@ -69,24 +70,21 @@ struct ContentView: View {
     }
     
     private func loadRestaurantsFromAPI(_ searchResponse: RestaurantSearchResponse) async {
-        // Clear existing restaurants
-        try? modelContext.delete(model: Restaurant.self)
+        // Note: RestaurantCacheManager already handles saving restaurants to the database
+        // This method now just serves as a callback confirmation that restaurants were loaded
         
-        // Convert API restaurants to local models and save
-        for apiRestaurant in searchResponse.restaurants {
-            let restaurant = apiRestaurant.toRestaurant(
-                isRecommended: apiRestaurant.rating ?? 0 > 4.5,
-                isPopular: apiRestaurant.totalRatings ?? 0 > 100
-            )
-            modelContext.insert(restaurant)
-        }
+        let source = searchResponse.message?.contains("cache") == true ? "cache" : "API"
+        print("✅ Loaded \(searchResponse.restaurants.count) restaurants from \(source)")
         
-        // Save to local database
+        // The restaurants are already in the database via RestaurantCacheManager
+        // The @Query in ContentView will automatically update the UI
+        
+        // Optional: Force a UI refresh if needed
+        // The SwiftData @Query should automatically update, but we can trigger a save to ensure consistency
         do {
             try modelContext.save()
-            print("✅ Saved \(searchResponse.restaurants.count) restaurants to local database")
         } catch {
-            print("❌ Failed to save restaurants: \(error)")
+            print("❌ Failed to save context: \(error)")
         }
     }
     
@@ -538,5 +536,5 @@ struct RestaurantCard: View {
 
 #Preview {
     ContentView()
-        .modelContainer(for: [Item.self, Restaurant.self], inMemory: true)
+        .modelContainer(for: [Item.self, Restaurant.self, LocationCache.self], inMemory: true)
 }
