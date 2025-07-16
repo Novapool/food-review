@@ -157,17 +157,9 @@ class RestaurantCacheManager {
                 )
             }
             
-            // Merge with existing cache if available
-            let mergedRestaurants = try await mergeWithExistingCache(
-                newRestaurants: newRestaurants,
-                location: location,
-                radius: radius,
-                context: context
-            )
-            
-            // Save to cache
+            // Save to cache directly without merging when doing a fresh API call
             try await saveToCache(
-                restaurants: mergedRestaurants,
+                restaurants: newRestaurants,
                 location: location,
                 radius: radius,
                 context: context
@@ -179,7 +171,7 @@ class RestaurantCacheManager {
             lastAPICall = Date()
             
             return RestaurantSearchResult(
-                restaurants: mergedRestaurants,
+                restaurants: newRestaurants,
                 source: .api,
                 cacheKey: LocationCache.createCacheKey(
                     latitude: location.coordinate.latitude,
@@ -188,7 +180,7 @@ class RestaurantCacheManager {
                 ),
                 searchLocation: location,
                 searchRadius: radius,
-                totalFound: mergedRestaurants.count
+                totalFound: newRestaurants.count
             )
             
         } catch {
@@ -227,79 +219,10 @@ class RestaurantCacheManager {
             restaurant.searchCount += 1
         }
         
+        print("📦 Retrieved \(restaurants.count) restaurants from cache")
         return restaurants
     }
     
-    private func mergeWithExistingCache(
-        newRestaurants: [Restaurant],
-        location: CLLocation,
-        radius: Double,
-        context: ModelContext
-    ) async throws -> [Restaurant] {
-        
-        // Find overlapping caches
-        let overlappingCaches = try LocationCache.findRelevantCaches(
-            for: location,
-            radius: radius,
-            in: context
-        )
-        
-        // Get existing restaurants from overlapping caches
-        var existingRestaurants: [Restaurant] = []
-        
-        for cache in overlappingCaches {
-            let cacheRestaurants = try getRestaurantsFromCache(cache: cache, context: context)
-            existingRestaurants.append(contentsOf: cacheRestaurants)
-        }
-        
-        // IMPROVED: Use dictionary for deduplication from the start
-        var uniqueRestaurants: [String: Restaurant] = [:]
-        
-        // First, add all existing restaurants
-        for restaurant in existingRestaurants {
-            // Check if still within search radius
-            let restaurantLocation = CLLocation(
-                latitude: restaurant.latitude,
-                longitude: restaurant.longitude
-            )
-            
-            if location.distance(from: restaurantLocation) <= radius {
-                uniqueRestaurants[restaurant.placeId] = restaurant
-            }
-        }
-        
-        // Then, add new restaurants (they will override existing ones with same placeId)
-        for restaurant in newRestaurants {
-            // Always prefer new data over existing data
-            if let existing = uniqueRestaurants[restaurant.placeId] {
-                // Update existing restaurant with new data but preserve some fields
-                existing.name = restaurant.name
-                existing.address = restaurant.address
-                existing.rating = restaurant.rating
-                existing.totalRatings = restaurant.totalRatings
-                existing.priceLevel = restaurant.priceLevel
-                existing.cuisineTypes = restaurant.cuisineTypes
-                existing.phone = restaurant.phone
-                existing.website = restaurant.website
-                existing.photos = restaurant.photos
-                existing.distanceMiles = restaurant.distanceMiles
-                existing.lastSeen = Date() // Update last seen
-                existing.searchCount += 1
-                
-                // Keep the existing restaurant object to maintain database relationships
-                uniqueRestaurants[restaurant.placeId] = existing
-            } else {
-                // New restaurant
-                uniqueRestaurants[restaurant.placeId] = restaurant
-            }
-        }
-        
-        let finalRestaurants = Array(uniqueRestaurants.values)
-        
-        print("🔄 Merged \(newRestaurants.count) new + \(existingRestaurants.count) existing = \(finalRestaurants.count) unique restaurants")
-        
-        return finalRestaurants
-    }
     
     private func saveToCache(
         restaurants: [Restaurant],
@@ -308,30 +231,6 @@ class RestaurantCacheManager {
         context: ModelContext
     ) async throws {
         
-        // Save or update restaurants in database
-        for restaurant in restaurants {
-            restaurant.lastSeen = Date()
-            restaurant.searchCount += 1
-            
-            // Add cache location reference
-            let cacheKey = LocationCache.createCacheKey(
-                latitude: location.coordinate.latitude,
-                longitude: location.coordinate.longitude,
-                radius: radius
-            )
-            
-            if restaurant.cacheLocations == nil {
-                restaurant.cacheLocations = []
-            }
-            
-            if !(restaurant.cacheLocations?.contains(cacheKey) ?? false) {
-                restaurant.cacheLocations?.append(cacheKey)
-            }
-            
-            context.insert(restaurant)
-        }
-        
-        // Create or update location cache
         let cacheKey = LocationCache.createCacheKey(
             latitude: location.coordinate.latitude,
             longitude: location.coordinate.longitude,
@@ -346,22 +245,45 @@ class RestaurantCacheManager {
         let descriptor = FetchDescriptor<LocationCache>(predicate: predicate)
         let existingCaches = try context.fetch(descriptor)
         
+        // Get existing restaurants from database to avoid duplicates
+        let existingRestaurants = try getExistingRestaurants(restaurants: restaurants, context: context)
+        
+        // Merge and update restaurants
+        let finalRestaurants = mergeRestaurants(new: restaurants, existing: existingRestaurants)
+        
+        // Save or update restaurants in database
+        for restaurant in finalRestaurants {
+            restaurant.lastSeen = Date()
+            restaurant.searchCount += 1
+            
+            // Add cache location reference
+            if restaurant.cacheLocations == nil {
+                restaurant.cacheLocations = []
+            }
+            
+            if !(restaurant.cacheLocations?.contains(cacheKey) ?? false) {
+                restaurant.cacheLocations?.append(cacheKey)
+            }
+            
+            context.insert(restaurant)
+        }
+        
         if let existingCache = existingCaches.first {
             // Update existing cache
-            existingCache.restaurantPlaceIds = restaurants.map { $0.placeId }
+            existingCache.restaurantPlaceIds = finalRestaurants.map { $0.placeId }
             existingCache.refreshExpiration()
-            print("🔄 Updated existing cache: \(cacheKey)")
+            print("🔄 Updated existing cache: \(cacheKey) with \(finalRestaurants.count) restaurants")
         } else {
             // Create new cache
             let newCache = LocationCache(
                 centerLatitude: location.coordinate.latitude,
                 centerLongitude: location.coordinate.longitude,
                 radiusMeters: radius,
-                restaurantPlaceIds: restaurants.map { $0.placeId }
+                restaurantPlaceIds: finalRestaurants.map { $0.placeId }
             )
             
             context.insert(newCache)
-            print("💾 Created new cache: \(cacheKey)")
+            print("💾 Created new cache: \(cacheKey) with \(finalRestaurants.count) restaurants")
         }
         
         // Save all changes
@@ -369,6 +291,56 @@ class RestaurantCacheManager {
         
         // Cleanup old caches
         try await performCacheCleanup(context: context)
+    }
+    
+    private func getExistingRestaurants(restaurants: [Restaurant], context: ModelContext) throws -> [Restaurant] {
+        let placeIds = restaurants.map { $0.placeId }
+        
+        let predicate = #Predicate<Restaurant> { restaurant in
+            placeIds.contains(restaurant.placeId)
+        }
+        
+        let descriptor = FetchDescriptor<Restaurant>(predicate: predicate)
+        return try context.fetch(descriptor)
+    }
+    
+    private func mergeRestaurants(new: [Restaurant], existing: [Restaurant]) -> [Restaurant] {
+        var restaurantMap: [String: Restaurant] = [:]
+        
+        // Add existing restaurants first
+        for restaurant in existing {
+            restaurantMap[restaurant.placeId] = restaurant
+        }
+        
+        // Add or update with new restaurants
+        for restaurant in new {
+            if let existingRestaurant = restaurantMap[restaurant.placeId] {
+                // Update existing restaurant with new data
+                existingRestaurant.name = restaurant.name
+                existingRestaurant.address = restaurant.address
+                existingRestaurant.latitude = restaurant.latitude
+                existingRestaurant.longitude = restaurant.longitude
+                existingRestaurant.rating = restaurant.rating
+                existingRestaurant.totalRatings = restaurant.totalRatings
+                existingRestaurant.priceLevel = restaurant.priceLevel
+                existingRestaurant.cuisineTypes = restaurant.cuisineTypes
+                existingRestaurant.phone = restaurant.phone
+                existingRestaurant.website = restaurant.website
+                existingRestaurant.photos = restaurant.photos
+                existingRestaurant.distanceMiles = restaurant.distanceMiles
+                existingRestaurant.isRecommended = restaurant.isRecommended
+                existingRestaurant.isPopular = restaurant.isPopular
+                existingRestaurant.lastSeen = Date()
+            } else {
+                // Add new restaurant
+                restaurantMap[restaurant.placeId] = restaurant
+            }
+        }
+        
+        let finalRestaurants = Array(restaurantMap.values)
+        print("🔄 Merged \(new.count) new + \(existing.count) existing = \(finalRestaurants.count) unique restaurants")
+        
+        return finalRestaurants
     }
     
     private func getStaleCache(
