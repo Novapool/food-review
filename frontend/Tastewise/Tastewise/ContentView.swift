@@ -20,41 +20,38 @@ struct ContentView: View {
     @State private var showingLocationAlert = false
     
     var body: some View {
-        NavigationStack {
-            VStack(spacing: 0) {
-                // Header
-                headerView
-                
-                // Restaurant List
-                restaurantListView
-            }
-            .navigationBarHidden(true)
-            .alert("Location Permission Required", isPresented: $showingLocationAlert) {
-                Button("Settings") {
-                    if let settingsURL = URL(string: UIApplication.openSettingsURLString) {
-                        UIApplication.shared.open(settingsURL)
-                    }
-                }
-                Button("Cancel", role: .cancel) { }
-            } message: {
-                Text("Please enable location services in Settings to find nearby restaurants.")
-            }
-            .onChange(of: locationManager.authorizationStatus) { _, status in
-                if status == .denied || status == .restricted {
-                    showingLocationAlert = true
+        VStack(spacing: 0) {
+            // Header
+            headerView
+            
+            // Restaurant List
+            restaurantListView
+        }
+        .alert("Location Permission Required", isPresented: $showingLocationAlert) {
+            Button("Settings") {
+                if let settingsURL = URL(string: UIApplication.openSettingsURLString) {
+                    UIApplication.shared.open(settingsURL)
                 }
             }
-            .onAppear {
-                setupLocationManager()
-                locationManager.requestLocation()
-                
-                // Run test in development
-                #if DEBUG
-                Task {
-                    await LocationTest.testLocationSending()
-                }
-                #endif
+            Button("Cancel", role: .cancel) { }
+        } message: {
+            Text("Please enable location services in Settings to find nearby restaurants.")
+        }
+        .onChange(of: locationManager.authorizationStatus) { _, status in
+            if status == .denied || status == .restricted {
+                showingLocationAlert = true
             }
+        }
+        .onAppear {
+            setupLocationManager()
+            locationManager.requestLocation()
+            
+            // Run test in development
+            #if DEBUG
+            Task {
+                await LocationTest.testLocationSending()
+            }
+            #endif
         }
     }
     
@@ -174,11 +171,9 @@ struct ContentView: View {
                 } else {
                     // Restaurant Cards
                     ForEach(filteredAndSortedRestaurants, id: \.placeId) { restaurant in
-                        RestaurantCard(restaurant: restaurant)
-                            .onTapGesture {
-                                // TODO: Navigate to restaurant details
-                                print("Tapped restaurant: \(restaurant.name)")
-                            }
+                        NavigationLink(destination: RestaurantDetailView(restaurant: restaurant)) {
+                            RestaurantCard(restaurant: restaurant)
+                        }
                     }
                     
                     // Refresh Button
@@ -466,6 +461,10 @@ struct QuickActionButton: View {
 
 struct RestaurantCard: View {
     let restaurant: Restaurant
+    let showFavoriteButton: Bool = true
+    
+    @Environment(\.modelContext) private var modelContext
+    @State private var isFavorite = false
     
     var body: some View {
         HStack(spacing: 12) {
@@ -535,6 +534,20 @@ struct RestaurantCard: View {
             
             Spacer()
             
+            // Favorite Button
+            if showFavoriteButton {
+                VStack {
+                    Button(action: toggleFavorite) {
+                        Image(systemName: isFavorite ? "heart.fill" : "heart")
+                            .foregroundColor(isFavorite ? .red : .gray)
+                            .font(.system(size: 20))
+                    }
+                    .animation(.spring(response: 0.3), value: isFavorite)
+                    
+                    Spacer()
+                }
+            }
+            
             // Restaurant Image Placeholder
             RoundedRectangle(cornerRadius: 8)
                 .fill(Color(.systemGray5))
@@ -548,6 +561,18 @@ struct RestaurantCard: View {
         .background(Color(.systemBackground))
         .cornerRadius(12)
         .shadow(color: Color.black.opacity(0.1), radius: 4, x: 0, y: 2)
+        .onAppear {
+            checkFavoriteStatus()
+        }
+    }
+    
+    private func checkFavoriteStatus() {
+        isFavorite = FavoritesManager.shared.isFavorite(restaurant, context: modelContext)
+    }
+    
+    private func toggleFavorite() {
+        FavoritesManager.shared.toggleFavorite(restaurant, context: modelContext)
+        isFavorite = FavoritesManager.shared.isFavorite(restaurant, context: modelContext)
     }
 }
 

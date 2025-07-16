@@ -16,6 +16,8 @@ struct TastewiseApp: App {
             Item.self,
             Restaurant.self,
             LocationCache.self,
+            UserFavorite.self,
+            UserPreferences.self,
         ])
         
         // Configure with migration options
@@ -76,7 +78,7 @@ struct TastewiseApp: App {
 
     var body: some Scene {
         WindowGroup {
-            ContentView()
+            MainTabView()
         }
         .modelContainer(sharedModelContainer)
     }

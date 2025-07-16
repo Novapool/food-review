@@ -399,3 +399,21 @@ extension Restaurant {
         )
     }
 }
+
+// MARK: - Favorites Extensions
+extension Restaurant {
+    // Check if this restaurant is favorited
+    func isFavorited(in context: ModelContext) -> Bool {
+        return FavoritesManager.shared.isFavorite(self, context: context)
+    }
+    
+    // Toggle favorite status
+    func toggleFavorite(in context: ModelContext) {
+        FavoritesManager.shared.toggleFavorite(self, context: context)
+    }
+}
+
+// MARK: - MapKit Conformance for RestaurantDetailView
+extension Restaurant: Identifiable {
+    // Already has placeId as unique identifier
+}
