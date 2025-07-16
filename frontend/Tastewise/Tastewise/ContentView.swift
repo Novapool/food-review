@@ -62,19 +62,19 @@ struct ContentView: View {
     
     private func setupLocationManager() {
         locationManager.setModelContext(modelContext)
-        locationManager.onRestaurantsLoaded = { searchResponse in
+        locationManager.onRestaurantsLoaded = { searchResult in
             Task { @MainActor in
-                await loadRestaurantsFromAPI(searchResponse)
+                await loadRestaurants(searchResult)
             }
         }
     }
     
-    private func loadRestaurantsFromAPI(_ searchResponse: RestaurantSearchResponse) async {
+    private func loadRestaurants(_ searchResult: RestaurantSearchResult) async {
         // Note: RestaurantCacheManager already handles saving restaurants to the database
         // This method now just serves as a callback confirmation that restaurants were loaded
         
-        let source = searchResponse.message?.contains("cache") == true ? "cache" : "API"
-        print("✅ Loaded \(searchResponse.restaurants.count) restaurants from \(source)")
+        let source = searchResult.isFromCache ? "cache" : "API"
+        print("✅ Loaded \(searchResult.restaurants.count) restaurants from \(source)")
         
         // The restaurants are already in the database via RestaurantCacheManager
         // The @Query in ContentView will automatically update the UI
@@ -355,7 +355,7 @@ struct ContentView: View {
     // MARK: - Computed Properties
     
     private var locationText: String {
-        if let location = locationManager.location {
+        if locationManager.location != nil {
             if locationManager.isLoadingRestaurants {
                 return "Searching restaurants • 10 miles"
             } else {
@@ -370,6 +370,23 @@ struct ContentView: View {
     
     private var filteredAndSortedRestaurants: [Restaurant] {
         var filtered = restaurants
+        
+        // DEFENSIVE: Remove duplicates by placeId first to prevent ForEach errors
+        var uniqueRestaurants: [String: Restaurant] = [:]
+        for restaurant in filtered {
+            // Keep the most recently seen restaurant if duplicates exist
+            if let existing = uniqueRestaurants[restaurant.placeId] {
+                let restaurantLastSeen = restaurant.lastSeen ?? Date.distantPast
+                let existingLastSeen = existing.lastSeen ?? Date.distantPast
+                
+                if restaurantLastSeen > existingLastSeen {
+                    uniqueRestaurants[restaurant.placeId] = restaurant
+                }
+            } else {
+                uniqueRestaurants[restaurant.placeId] = restaurant
+            }
+        }
+        filtered = Array(uniqueRestaurants.values)
         
         // Apply search filter
         if !searchText.isEmpty {
@@ -465,7 +482,7 @@ struct RestaurantCard: View {
                 
                 HStack(spacing: 12) {
                     // Rating
-                    if let rating = restaurant.rating {
+                    if restaurant.rating != nil {
                         HStack(spacing: 4) {
                             Text(restaurant.ratingStars)
                                 .font(.caption)

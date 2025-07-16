@@ -252,35 +252,44 @@ class RestaurantCacheManager {
             existingRestaurants.append(contentsOf: cacheRestaurants)
         }
         
-        // Merge new and existing restaurants, avoiding duplicates
-        var mergedRestaurants = newRestaurants
-        let newPlaceIds = Set(newRestaurants.map { $0.placeId })
+        // IMPROVED: Use dictionary for deduplication from the start
+        var uniqueRestaurants: [String: Restaurant] = [:]
         
-        // Add existing restaurants that aren't in new results
-        for existingRestaurant in existingRestaurants {
-            if !newPlaceIds.contains(existingRestaurant.placeId) {
-                // Check if still within search radius
-                let restaurantLocation = CLLocation(
-                    latitude: existingRestaurant.latitude,
-                    longitude: existingRestaurant.longitude
-                )
-                
-                if location.distance(from: restaurantLocation) <= radius {
-                    mergedRestaurants.append(existingRestaurant)
-                }
+        // First, add all existing restaurants
+        for restaurant in existingRestaurants {
+            // Check if still within search radius
+            let restaurantLocation = CLLocation(
+                latitude: restaurant.latitude,
+                longitude: restaurant.longitude
+            )
+            
+            if location.distance(from: restaurantLocation) <= radius {
+                uniqueRestaurants[restaurant.placeId] = restaurant
             }
         }
         
-        // Remove duplicates by place_id (keep newer data)
-        var uniqueRestaurants: [String: Restaurant] = [:]
-        
-        for restaurant in mergedRestaurants {
+        // Then, add new restaurants (they will override existing ones with same placeId)
+        for restaurant in newRestaurants {
+            // Always prefer new data over existing data
             if let existing = uniqueRestaurants[restaurant.placeId] {
-                // Keep the more recently updated one
-                if restaurant.createdAt > existing.createdAt {
-                    uniqueRestaurants[restaurant.placeId] = restaurant
-                }
+                // Update existing restaurant with new data but preserve some fields
+                existing.name = restaurant.name
+                existing.address = restaurant.address
+                existing.rating = restaurant.rating
+                existing.totalRatings = restaurant.totalRatings
+                existing.priceLevel = restaurant.priceLevel
+                existing.cuisineTypes = restaurant.cuisineTypes
+                existing.phone = restaurant.phone
+                existing.website = restaurant.website
+                existing.photos = restaurant.photos
+                existing.distanceMiles = restaurant.distanceMiles
+                existing.lastSeen = Date() // Update last seen
+                existing.searchCount += 1
+                
+                // Keep the existing restaurant object to maintain database relationships
+                uniqueRestaurants[restaurant.placeId] = existing
             } else {
+                // New restaurant
                 uniqueRestaurants[restaurant.placeId] = restaurant
             }
         }
@@ -311,8 +320,12 @@ class RestaurantCacheManager {
                 radius: radius
             )
             
-            if !restaurant.cacheLocations.contains(cacheKey) {
-                restaurant.cacheLocations.append(cacheKey)
+            if restaurant.cacheLocations == nil {
+                restaurant.cacheLocations = []
+            }
+            
+            if !(restaurant.cacheLocations?.contains(cacheKey) ?? false) {
+                restaurant.cacheLocations?.append(cacheKey)
             }
             
             context.insert(restaurant)
@@ -411,9 +424,15 @@ class RestaurantCacheManager {
         let referencedPlaceIds = Set(allCaches.flatMap { $0.restaurantPlaceIds })
         
         // Find orphaned restaurants
+        let sevenDaysAgo = -7 * 24 * 60 * 60.0 // 7 days in seconds
+        let eightDaysAgo = -8 * 24 * 60 * 60.0 // 8 days in seconds (fallback for nil lastSeen)
+        
         let orphanedRestaurants = allRestaurants.filter { restaurant in
-            !referencedPlaceIds.contains(restaurant.placeId) &&
-            restaurant.lastSeen.timeIntervalSinceNow < -7 * 24 * 60 * 60 // Older than 7 days
+            let isNotReferenced = !referencedPlaceIds.contains(restaurant.placeId)
+            let lastSeenInterval = restaurant.lastSeen?.timeIntervalSinceNow ?? eightDaysAgo
+            let isOld = lastSeenInterval < sevenDaysAgo
+            
+            return isNotReferenced && isOld
         }
         
         if !orphanedRestaurants.isEmpty {

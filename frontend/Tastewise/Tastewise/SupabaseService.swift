@@ -126,56 +126,6 @@ class SupabaseService {
         }
     }
     
-    // MARK: - Restaurant Search with Filters
-    
-    func searchRestaurants(
-        location: CLLocation,
-        radius: Double = 16093,
-        minRating: Double? = nil,
-        keyword: String? = nil
-    ) async throws -> RestaurantSearchResponse {
-        
-        guard let url = URL(string: "\(supabaseURL)/functions/v1/restaurant-search") else {
-            throw SupabaseError.invalidURL
-        }
-        
-        let searchRequest = RestaurantSearchRequest(
-            latitude: location.coordinate.latitude,
-            longitude: location.coordinate.longitude,
-            radius: Int(radius),
-            minRating: minRating,
-            keyword: keyword
-        )
-        
-        var request = URLRequest(url: url)
-        request.httpMethod = "POST"
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
-        request.setValue(apiKey, forHTTPHeaderField: "apikey")
-        
-        do {
-            let jsonData = try JSONEncoder().encode(searchRequest)
-            request.httpBody = jsonData
-            
-            let (data, response) = try await URLSession.shared.data(for: request)
-            
-            guard let httpResponse = response as? HTTPURLResponse else {
-                throw SupabaseError.invalidResponse
-            }
-            
-            if httpResponse.statusCode == 200 {
-                let searchResponse = try JSONDecoder().decode(RestaurantSearchResponse.self, from: data)
-                return searchResponse
-            } else {
-                throw SupabaseError.httpError(httpResponse.statusCode)
-            }
-            
-        } catch let error as SupabaseError {
-            throw error
-        } catch {
-            throw SupabaseError.networkError(error)
-        }
-    }
 }
 
 // MARK: - Restaurant Search Models

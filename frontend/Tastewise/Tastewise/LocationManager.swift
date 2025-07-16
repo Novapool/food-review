@@ -23,7 +23,7 @@ class LocationManager: NSObject, CLLocationManagerDelegate {
     var restaurantError: String?
     
     // Restaurant search callback
-    var onRestaurantsLoaded: ((RestaurantSearchResponse) -> Void)?
+    var onRestaurantsLoaded: ((RestaurantSearchResult) -> Void)?
     
     // ModelContext for cache operations
     private var modelContext: ModelContext?
@@ -142,40 +142,9 @@ class LocationManager: NSObject, CLLocationManagerDelegate {
                 context: context
             )
             
-            // Convert RestaurantSearchResult back to RestaurantSearchResponse for compatibility
-            let compatibleResponse = RestaurantSearchResponse(
-                success: true,
-                restaurants: searchResult.restaurants.map { restaurant in
-                    RestaurantAPI(
-                        placeId: restaurant.placeId,
-                        name: restaurant.name,
-                        address: restaurant.address,
-                        latitude: restaurant.latitude,
-                        longitude: restaurant.longitude,
-                        rating: restaurant.rating,
-                        totalRatings: restaurant.totalRatings,
-                        priceLevel: restaurant.priceLevel,
-                        cuisineTypes: restaurant.cuisineTypes,
-                        phone: restaurant.phone,
-                        website: restaurant.website,
-                        photos: restaurant.photos,
-                        distanceMiles: restaurant.distanceMiles,
-                        isOpen: nil
-                    )
-                },
-                totalFound: searchResult.totalFound,
-                searchLocation: SearchLocation(
-                    lat: searchResult.searchLocation.coordinate.latitude,
-                    lng: searchResult.searchLocation.coordinate.longitude
-                ),
-                radiusMiles: searchResult.searchRadius * 0.000621371, // Convert meters to miles
-                timestamp: ISO8601DateFormatter().string(from: Date()),
-                message: searchResult.isFromCache ? "Loaded from cache" : "Loaded from API"
-            )
-            
             await MainActor.run {
                 self.isLoadingRestaurants = false
-                self.onRestaurantsLoaded?(compatibleResponse)
+                self.onRestaurantsLoaded?(searchResult)
             }
             
         } catch {

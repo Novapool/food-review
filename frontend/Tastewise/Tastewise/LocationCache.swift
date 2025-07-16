@@ -17,7 +17,18 @@ final class LocationCache {
     var radiusMeters: Double
     var searchTimestamp: Date
     var expiresAt: Date
-    var restaurantPlaceIds: [String] // Store place IDs instead of direct relationships for better performance
+    private var restaurantPlaceIdsData: Data?
+    
+    // Computed property for array access
+    var restaurantPlaceIds: [String] {
+        get {
+            guard let data = restaurantPlaceIdsData else { return [] }
+            return (try? JSONDecoder().decode([String].self, from: data)) ?? []
+        }
+        set {
+            restaurantPlaceIdsData = try? JSONEncoder().encode(newValue)
+        }
+    }
     
     init(
         centerLatitude: Double,
@@ -28,7 +39,6 @@ final class LocationCache {
         self.centerLatitude = centerLatitude
         self.centerLongitude = centerLongitude
         self.radiusMeters = radiusMeters
-        self.restaurantPlaceIds = restaurantPlaceIds
         self.searchTimestamp = Date()
         self.expiresAt = Date().addingTimeInterval(7 * 24 * 60 * 60) // 7 days
         
@@ -38,6 +48,9 @@ final class LocationCache {
             longitude: centerLongitude,
             radius: radiusMeters
         )
+        
+        // Set restaurant place IDs after all stored properties are initialized
+        self.restaurantPlaceIds = restaurantPlaceIds
     }
     
     // MARK: - Cache Key Generation
@@ -167,8 +180,9 @@ extension LocationCache {
         in context: ModelContext
     ) throws -> [LocationCache] {
         
+        let currentDate = Date()
         let predicate = #Predicate<LocationCache> { cache in
-            !cache.isExpired
+            cache.expiresAt > currentDate
         }
         
         let descriptor = FetchDescriptor<LocationCache>(predicate: predicate)
@@ -208,8 +222,9 @@ extension LocationCache {
     // MARK: - Cache Cleanup
     
     static func cleanupExpiredCaches(in context: ModelContext) throws {
+        let currentDate = Date()
         let predicate = #Predicate<LocationCache> { cache in
-            cache.expiresAt < Date()
+            cache.expiresAt < currentDate
         }
         
         let descriptor = FetchDescriptor<LocationCache>(predicate: predicate)

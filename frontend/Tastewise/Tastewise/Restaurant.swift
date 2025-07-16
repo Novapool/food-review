@@ -20,17 +20,48 @@ final class Restaurant {
     var rating: Double?
     var totalRatings: Int?
     var priceLevel: Int?
-    var cuisineTypes: [String]
+    private var cuisineTypesData: Data?
     var phone: String?
     var website: String?
-    var photos: [String]
+    private var photosData: Data?
     var distanceMiles: Double?
     var isRecommended: Bool
     var isPopular: Bool
     var createdAt: Date
-    var lastSeen: Date
+    var lastSeen: Date?
     var searchCount: Int
-    var cacheLocations: [String]
+    private var cacheLocationsData: Data?
+    
+    // Computed properties for array access
+    var cuisineTypes: [String] {
+        get {
+            guard let data = cuisineTypesData else { return [] }
+            return (try? JSONDecoder().decode([String].self, from: data)) ?? []
+        }
+        set {
+            cuisineTypesData = try? JSONEncoder().encode(newValue)
+        }
+    }
+    
+    var photos: [String] {
+        get {
+            guard let data = photosData else { return [] }
+            return (try? JSONDecoder().decode([String].self, from: data)) ?? []
+        }
+        set {
+            photosData = try? JSONEncoder().encode(newValue)
+        }
+    }
+    
+    var cacheLocations: [String]? {
+        get {
+            guard let data = cacheLocationsData else { return nil }
+            return try? JSONDecoder().decode([String].self, from: data)
+        }
+        set {
+            cacheLocationsData = try? JSONEncoder().encode(newValue)
+        }
+    }
     
     init(
         placeId: String,
@@ -57,16 +88,18 @@ final class Restaurant {
         self.rating = rating
         self.totalRatings = totalRatings
         self.priceLevel = priceLevel
-        self.cuisineTypes = cuisineTypes
         self.phone = phone
         self.website = website
-        self.photos = photos
         self.distanceMiles = distanceMiles
         self.isRecommended = isRecommended
         self.isPopular = isPopular
         self.createdAt = Date()
         self.lastSeen = Date()
         self.searchCount = 0
+        
+        // Set computed properties after all stored properties are initialized
+        self.cuisineTypes = cuisineTypes
+        self.photos = photos
         self.cacheLocations = []
     }
 }
